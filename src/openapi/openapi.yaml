@@ -1,0 +1,142 @@
+openapi: 3.1.0
+info:
+  title: Amrutam Telemedicine Engine API
+  version: 1.0.0
+  description: >
+    Production-grade Ayurvedic Telemedicine API powering Amrutam's virtual consultations,
+    concurrency-safe slot scheduling (zero double-booking), AES-256-GCM encrypted health records,
+    and HMAC-SHA256 tamper-evident digital prescriptions.
+servers:
+  - url: http://localhost:4000/api
+    description: Local Development / Docker Environment
+paths:
+  /auth/login:
+    post:
+      summary: Authenticate user & issue JWT tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+      responses:
+        '200':
+          description: Login successful or MFA challenge initiated
+  /doctors:
+    get:
+      summary: Discover and filter verified Ayurvedic doctors
+      parameters:
+        - name: specialty
+          in: query
+          schema:
+            type: string
+        - name: maxFee
+          in: query
+          schema:
+            type: number
+        - name: minRating
+          in: query
+          schema:
+            type: number
+      responses:
+        '200':
+          description: Filtered list of verified doctors
+  /availability/{doctorId}:
+    get:
+      summary: Retrieve available, held, and booked slots for a doctor
+      parameters:
+        - name: doctorId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Chronological list of slots
+  /bookings/hold:
+    post:
+      summary: Atomically reserve a slot for 10 minutes with Redlock distributed lock
+      headers:
+        Idempotency-Key:
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slotId]
+              properties:
+                slotId:
+                  type: string
+      responses:
+        '201':
+          description: Slot held successfully for 10 minutes
+        '409':
+          description: Double-booking collision prevented
+  /payments/checkout:
+    post:
+      summary: Create checkout order for a held slot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slotId]
+              properties:
+                slotId:
+                  type: string
+      responses:
+        '201':
+          description: Payment checkout order created
+  /payments/process:
+    post:
+      summary: Authorize payment and confirm booking
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [orderId]
+              properties:
+                orderId:
+                  type: string
+                paymentMethod:
+                  type: string
+      responses:
+        '200':
+          description: Payment captured and consultation scheduled
+  /prescriptions/{id}:
+    get:
+      summary: Get authenticated digital prescription with HMAC verification
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Verifiable prescription document
+  /audit/verify:
+    get:
+      summary: Verify DISHA / ABDM cryptographic audit log hash chain
+      responses:
+        '200':
+          description: Cryptographic integrity status
+  /analytics/summary:
+    get:
+      summary: Admin governance metrics and doctor utilization
+      responses:
+        '200':
+          description: Analytics summary
