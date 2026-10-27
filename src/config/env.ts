@@ -14,6 +14,8 @@ const envSchema = z.object({
   AUDIT_HMAC_SECRET: z.string().default('amrutam_audit_hmac_secret_chain_key_2026'),
   CORS_ORIGIN: z.string().default('http://localhost:3000'),
   LOG_LEVEL: z.string().default('info'),
+  RAZORPAY_KEY_ID: z.string().default('rzp_test_amrutam_telehealth'),
+  RAZORPAY_KEY_SECRET: z.string().default('rzp_test_secret_key_mock_2026'),
 });
 
 export const env = envSchema.parse(process.env);

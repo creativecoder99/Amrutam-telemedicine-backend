@@ -65,6 +65,7 @@ export class PrescriptionsService {
     if (consultation.status !== 'COMPLETED') {
       consultation.status = 'COMPLETED';
       dbStore.consultations.set(data.consultationId, consultation);
+      dbStore.creditDoctorWallet(data.doctorId, 200);
     }
 
     return prescription;

@@ -18,6 +18,8 @@ import { consultationRoutes } from './modules/consultations/consultations.routes
 import { prescriptionRoutes } from './modules/prescriptions/prescriptions.routes.js';
 import { auditRoutes } from './modules/audit/audit.routes.js';
 import { analyticsRoutes } from './modules/analytics/analytics.routes.js';
+import { payoutRoutes } from './modules/payouts/payouts.routes.js';
+import { patientRoutes } from './modules/patients/patients.routes.js';
 
 export const app = express();
 
@@ -89,6 +91,8 @@ app.use('/api/consultations', consultationRoutes);
 app.use('/api/prescriptions', prescriptionRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/analytics', analyticsRoutes);
+app.use('/api/payouts', payoutRoutes);
+app.use('/api/patients', patientRoutes);
 
 // Root informational endpoint
 app.get('/api', (req: Request, res: Response) => {

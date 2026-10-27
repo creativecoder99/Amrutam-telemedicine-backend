@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { dbStore, AvailabilitySlotEntity } from '../../database/store.js';
-import { NotFoundError } from '../../core/errors.js';
+import { NotFoundError, ValidationError } from '../../core/errors.js';
 
 export class AvailabilityService {
   async getDoctorSlots(doctorId: string, startDate?: string, endDate?: string): Promise<AvailabilitySlotEntity[]> {
@@ -27,6 +27,12 @@ export class AvailabilityService {
   async generateSlots(doctorId: string, daysAhead = 14): Promise<AvailabilitySlotEntity[]> {
     const doctor = dbStore.doctors.get(doctorId);
     if (!doctor) throw new NotFoundError('Doctor', doctorId);
+
+    if (doctor.verificationStatus && doctor.verificationStatus !== 'VERIFIED') {
+      throw new ValidationError(
+        `Doctor verification status is '${doctor.verificationStatus}'. Must be verified by Admin before posting availability.`
+      );
+    }
 
     const generated: AvailabilitySlotEntity[] = [];
     const baseDate = new Date();

@@ -94,6 +94,19 @@ export class ConsultationsService {
     consultation.status = newStatus;
     dbStore.consultations.set(id, consultation);
 
+    // Auto-credit ₹200 to Doctor remuneration wallet upon consultation completion
+    if (newStatus === 'COMPLETED') {
+      dbStore.creditDoctorWallet(consultation.doctorId, 200);
+      dbStore.appendAuditLog(
+        'DOCTOR_WALLET_CREDITED',
+        'WALLET',
+        consultation.doctorId,
+        consultation.doctorId,
+        'SYSTEM',
+        'Amrutam Telehealth Remuneration Engine'
+      );
+    }
+
     return consultation;
   }
 

@@ -40,6 +40,36 @@ export interface DoctorEntity {
   rating: number;
   reviewCount: number;
   isVerified: boolean;
+  verificationStatus: 'PENDING_VERIFICATION' | 'VERIFIED' | 'REJECTED';
+  licenseDocumentUrl?: string;
+  qualificationDocumentUrl?: string;
+  idProofUrl?: string;
+  rejectionReason?: string;
+}
+
+export interface WalletEntity {
+  id: string;
+  doctorId: string;
+  balance: number;
+  totalEarned: number;
+  updatedAt: string;
+}
+
+export interface PayoutRequestEntity {
+  id: string;
+  doctorId: string;
+  doctorName?: string;
+  amount: number;
+  status: 'PENDING' | 'PROCESSED' | 'REJECTED';
+  accountDetails: {
+    upiId?: string;
+    bankName?: string;
+    accountNumber?: string;
+    ifscCode?: string;
+  };
+  requestedAt: string;
+  processedAt?: string;
+  adminNotes?: string;
 }
 
 export interface AvailabilitySlotEntity {
@@ -124,6 +154,8 @@ class MemoryStore {
   public prescriptions: Map<string, PrescriptionEntity> = new Map();
   public auditLogs: AuditLogEntity[] = [];
   public idempotencyKeys: Map<string, IdempotencyRecord> = new Map();
+  public wallets: Map<string, WalletEntity> = new Map(); // doctorId -> WalletEntity
+  public payoutRequests: Map<string, PayoutRequestEntity> = new Map(); // id -> PayoutRequestEntity
 
   constructor() {
     this.seedInitialData();
@@ -242,6 +274,8 @@ class MemoryStore {
       rating: 4.95,
       reviewCount: 342,
       isVerified: true,
+      verificationStatus: 'VERIFIED',
+      licenseDocumentUrl: 'https://amrutam.co.in/docs/license_rajesh.pdf',
     };
     const doc2: DoctorEntity = {
       id: 'd2222222-2222-2222-2222-222222222222',
@@ -258,6 +292,8 @@ class MemoryStore {
       rating: 4.92,
       reviewCount: 218,
       isVerified: true,
+      verificationStatus: 'VERIFIED',
+      licenseDocumentUrl: 'https://amrutam.co.in/docs/license_ananya.pdf',
     };
     const doc3: DoctorEntity = {
       id: 'd3333333-3333-3333-3333-333333333333',
@@ -274,6 +310,8 @@ class MemoryStore {
       rating: 4.98,
       reviewCount: 480,
       isVerified: true,
+      verificationStatus: 'VERIFIED',
+      licenseDocumentUrl: 'https://amrutam.co.in/docs/license_vikramaditya.pdf',
     };
     const doc4: DoctorEntity = {
       id: 'd4444444-4444-4444-4444-444444444444',
@@ -290,9 +328,71 @@ class MemoryStore {
       rating: 4.88,
       reviewCount: 195,
       isVerified: true,
+      verificationStatus: 'VERIFIED',
+      licenseDocumentUrl: 'https://amrutam.co.in/docs/license_priya.pdf',
     };
 
-    [doc1, doc2, doc3, doc4].forEach((d) => this.doctors.set(d.id, d));
+    // 5. Seed a Doctor Pending Admin Verification
+    const doc5: DoctorEntity = {
+      id: 'd5555555-5555-5555-5555-555555555555',
+      userId: 'u-pending-doc-01',
+      fullName: 'Dr. Vaidya Kavyanjali Sen',
+      email: 'dr.kavyanjali@amrutam.co.in',
+      licenseNumber: 'AY-NMC-2024-9102',
+      qualification: 'BAMS, MD (Ayurveda) - Dravyaguna',
+      primarySpecialty: 'Dravyaguna (Herbal Pharmacology)',
+      secondarySpecialties: ['Herbal Drug Safety', 'Plant Therapeutics', 'Rasayana'],
+      experienceYears: 7,
+      bio: 'Ayurvedic pharmacologist and practitioner focusing on personalized herbal dosages, pure single-herb synergies, and immune rejuvenation.',
+      consultationFee: 550,
+      rating: 5.0,
+      reviewCount: 0,
+      isVerified: false,
+      verificationStatus: 'PENDING_VERIFICATION',
+      licenseDocumentUrl: 'https://amrutam.co.in/docs/verification_kavyanjali_license.pdf',
+      qualificationDocumentUrl: 'https://amrutam.co.in/docs/degree_kavyanjali_bams_md.pdf',
+      idProofUrl: 'https://amrutam.co.in/docs/id_proof_kavyanjali_aadhaar.pdf',
+    };
+
+    [doc1, doc2, doc3, doc4, doc5].forEach((d) => this.doctors.set(d.id, d));
+
+    // Seed Doctor Remuneration Wallets (Doctor earns ₹200 per patient consultation)
+    // Dr. Rajesh Sharma has completed consultations and balance >= 1000 so payout request can be tested
+    this.wallets.set(doc1.id, {
+      id: 'w1',
+      doctorId: doc1.id,
+      balance: 1200.0,
+      totalEarned: 1200.0,
+      updatedAt: new Date().toISOString(),
+    });
+    this.wallets.set(doc2.id, {
+      id: 'w2',
+      doctorId: doc2.id,
+      balance: 600.0,
+      totalEarned: 600.0,
+      updatedAt: new Date().toISOString(),
+    });
+    this.wallets.set(doc3.id, {
+      id: 'w3',
+      doctorId: doc3.id,
+      balance: 800.0,
+      totalEarned: 800.0,
+      updatedAt: new Date().toISOString(),
+    });
+    this.wallets.set(doc4.id, {
+      id: 'w4',
+      doctorId: doc4.id,
+      balance: 400.0,
+      totalEarned: 400.0,
+      updatedAt: new Date().toISOString(),
+    });
+    this.wallets.set(doc5.id, {
+      id: 'w5',
+      doctorId: doc5.id,
+      balance: 0.0,
+      totalEarned: 0.0,
+      updatedAt: new Date().toISOString(),
+    });
 
     // 4. Generate Rolling 7-day Slots for each Doctor (09:00 - 18:00)
     const doctorList = [doc1, doc2, doc3, doc4];
@@ -438,6 +538,45 @@ class MemoryStore {
     };
     this.auditLogs.push(log);
     return log;
+  }
+
+  // Credit doctor remuneration wallet (₹200 per completed consultation)
+  public creditDoctorWallet(doctorId: string, amount: number = 200) {
+    let wallet = this.wallets.get(doctorId);
+    if (!wallet) {
+      wallet = {
+        id: crypto.randomUUID(),
+        doctorId,
+        balance: 0,
+        totalEarned: 0,
+        updatedAt: new Date().toISOString(),
+      };
+      this.wallets.set(doctorId, wallet);
+    }
+    wallet.balance += amount;
+    wallet.totalEarned += amount;
+    wallet.updatedAt = new Date().toISOString();
+    return wallet;
+  }
+
+  // Delete doctor profile and associated slots
+  public deleteDoctor(doctorId: string) {
+    this.doctors.delete(doctorId);
+    this.wallets.delete(doctorId);
+    // Remove slots associated with doctor
+    for (const [slotId, slot] of this.slots.entries()) {
+      if (slot.doctorId === doctorId) {
+        this.slots.delete(slotId);
+      }
+    }
+    return true;
+  }
+
+  // Delete patient and associated profile
+  public deletePatient(patientId: string) {
+    this.users.delete(patientId);
+    this.profiles.delete(patientId);
+    return true;
   }
 }
 
