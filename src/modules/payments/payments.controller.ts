@@ -17,10 +17,16 @@ export class PaymentsController {
 
   async processPayment(req: Request, res: Response, next: NextFunction) {
     try {
-      const { orderId, paymentMethod } = req.body;
+      const { orderId, paymentMethod, razorpayPaymentId, razorpaySignature } = req.body;
       if (!orderId) throw new ValidationError('orderId is required');
       const idempotencyKey = req.headers['idempotency-key'] as string;
-      const result = await paymentsService.processPayment(orderId, paymentMethod, idempotencyKey);
+      const result = await paymentsService.processPayment(
+        orderId,
+        paymentMethod,
+        idempotencyKey,
+        razorpayPaymentId,
+        razorpaySignature
+      );
       res.status(200).json(result);
     } catch (err) {
       next(err);
