@@ -3,140 +3,622 @@ info:
   title: Amrutam Telemedicine Engine API
   version: 1.0.0
   description: >
-    Production-grade Ayurvedic Telemedicine API powering Amrutam's virtual consultations,
-    concurrency-safe slot scheduling (zero double-booking), AES-256-GCM encrypted health records,
-    and HMAC-SHA256 tamper-evident digital prescriptions.
+    Enterprise-grade Ayurvedic Telemedicine REST API powering Amrutam's virtual consultations,
+    high-concurrency slot scheduling with a Zero Double-Booking Guarantee (Redis Redlock),
+    AES-256-GCM envelope-encrypted clinical notes, and HMAC-SHA256 tamper-evident digital prescriptions.
+  contact:
+    name: Amrutam Clinical Engineering
+    email: tech@amrutam.co.in
 servers:
   - url: http://localhost:4000/api
-    description: Local Development / Docker Environment
+    description: Local Development / Docker Compose Environment
+  - url: https://amrutam-telemedicine-backend-zeqq.onrender.com/api
+    description: Production Render Web Service
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Enter your JWT Bearer token obtained from /auth/login or /auth/register
+    IdempotencyKey:
+      type: apiKey
+      in: header
+      name: Idempotency-Key
+      description: Unique UUIDv4 key ensuring safe request retries without duplicate side effects
+
+  schemas:
+    RFC7807Error:
+      type: object
+      required: [type, title, status, detail]
+      properties:
+        type:
+          type: string
+          example: "https://errors.amrutam.co.in/conflict"
+        title:
+          type: string
+          example: "Double-Booking Conflict"
+        status:
+          type: integer
+          example: 409
+        detail:
+          type: string
+          example: "This slot is currently being locked by another concurrent patient transaction."
+        instance:
+          type: string
+          example: "/api/bookings/hold"
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        fullName:
+          type: string
+        role:
+          type: string
+          enum: [PATIENT, DOCTOR, ADMIN, AUDITOR]
+        phone:
+          type: string
+        prakritiType:
+          type: string
+          enum: [VATA_PITTA, PITTA_KAPHA, VATA_KAPHA, TRIDOSHIC]
+        verificationStatus:
+          type: string
+          enum: [PENDING_VERIFICATION, VERIFIED, REJECTED]
+
+    Doctor:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        fullName:
+          type: string
+        email:
+          type: string
+          format: email
+        licenseNumber:
+          type: string
+        qualification:
+          type: string
+        primarySpecialty:
+          type: string
+        secondarySpecialties:
+          type: array
+          items:
+            type: string
+        experienceYears:
+          type: integer
+        consultationFee:
+          type: number
+        rating:
+          type: number
+        reviewCount:
+          type: integer
+        verificationStatus:
+          type: string
+          enum: [PENDING_VERIFICATION, VERIFIED, REJECTED]
+        isVerified:
+          type: boolean
+
+    AvailabilitySlot:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        doctorId:
+          type: string
+          format: uuid
+        startTime:
+          type: string
+          format: date-time
+        endTime:
+          type: string
+          format: date-time
+        slotType:
+          type: string
+          enum: [VIDEO, AUDIO, CHAT]
+        status:
+          type: string
+          enum: [AVAILABLE, HELD, BOOKED, CANCELLED]
+        customFee:
+          type: number
+        heldByPatientId:
+          type: string
+        holdExpiresAt:
+          type: string
+          format: date-time
+
+    Consultation:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        slotId:
+          type: string
+          format: uuid
+        doctorId:
+          type: string
+          format: uuid
+        patientId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED]
+        startTime:
+          type: string
+          format: date-time
+        endTime:
+          type: string
+          format: date-time
+        encryptedNotes:
+          type: string
+          description: "AES-256-GCM envelope encrypted clinical SOAP notes (iv:authTag:ciphertext)"
+        prakritiAssessed:
+          type: string
+
+    Prescription:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        consultationId:
+          type: string
+          format: uuid
+        doctorId:
+          type: string
+          format: uuid
+        patientId:
+          type: string
+          format: uuid
+        diagnosis:
+          type: string
+        medicines:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              dosage: { type: string }
+              frequency: { type: string }
+              duration: { type: string }
+              instructions: { type: string }
+        dietaryAdvice:
+          type: array
+          items:
+            type: string
+        hmacSignature:
+          type: string
+          description: "HMAC-SHA256 signature generated using system audit secret"
+        isVerified:
+          type: boolean
+
+    AuditRecord:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        sequence:
+          type: integer
+        timestamp:
+          type: string
+          format: date-time
+        action:
+          type: string
+        actorId:
+          type: string
+        targetId:
+          type: string
+        previousHash:
+          type: string
+        currentHash:
+          type: string
+
 paths:
+  /auth/register:
+    post:
+      summary: Register a new patient or doctor account
+      tags: [Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, fullName]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8 }
+                fullName: { type: string }
+                phone: { type: string }
+                role: { type: string, enum: [PATIENT, DOCTOR] }
+                prakritiType: { type: string }
+      responses:
+        '201':
+          description: User registered successfully
+        '400':
+          $ref: '#/components/schemas/RFC7807Error'
+
   /auth/login:
     post:
       summary: Authenticate user & issue JWT tokens
+      tags: [Authentication]
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [email]
+              required: [email, password]
               properties:
-                email:
-                  type: string
-                  format: email
-                password:
-                  type: string
+                email: { type: string, format: email }
+                password: { type: string }
       responses:
         '200':
-          description: Login successful or MFA challenge initiated
+          description: Authentication successful (JWT token returned)
+        '401':
+          $ref: '#/components/schemas/RFC7807Error'
+
   /doctors:
     get:
       summary: Discover and filter verified Ayurvedic doctors
+      tags: [Doctors]
       parameters:
         - name: specialty
           in: query
-          schema:
-            type: string
+          schema: { type: string }
         - name: maxFee
           in: query
-          schema:
-            type: number
+          schema: { type: number }
         - name: minRating
           in: query
-          schema:
-            type: number
+          schema: { type: number }
       responses:
         '200':
           description: Filtered list of verified doctors
-  /availability/{doctorId}:
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Doctor'
+
+  /doctors/{id}:
     get:
-      summary: Retrieve available, held, and booked slots for a doctor
-      parameters:
-        - name: doctorId
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Chronological list of slots
-  /bookings/hold:
-    post:
-      summary: Atomically reserve a slot for 10 minutes with Redlock distributed lock
-      headers:
-        Idempotency-Key:
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [slotId]
-              properties:
-                slotId:
-                  type: string
-      responses:
-        '201':
-          description: Slot held successfully for 10 minutes
-        '409':
-          description: Double-booking collision prevented
-  /payments/checkout:
-    post:
-      summary: Create checkout order for a held slot
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [slotId]
-              properties:
-                slotId:
-                  type: string
-      responses:
-        '201':
-          description: Payment checkout order created
-  /payments/process:
-    post:
-      summary: Authorize payment and confirm booking
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [orderId]
-              properties:
-                orderId:
-                  type: string
-                paymentMethod:
-                  type: string
-      responses:
-        '200':
-          description: Payment captured and consultation scheduled
-  /prescriptions/{id}:
-    get:
-      summary: Get authenticated digital prescription with HMAC verification
+      summary: Retrieve doctor profile details by ID
+      tags: [Doctors]
       parameters:
         - name: id
           in: path
           required: true
-          schema:
-            type: string
+          schema: { type: string }
       responses:
         '200':
-          description: Verifiable prescription document
-  /audit/verify:
+          description: Doctor details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Doctor'
+
+  /doctors/{id}/verify:
+    patch:
+      summary: Admin KYC approval or rejection of doctor license
+      tags: [Doctors, Governance]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [VERIFIED, REJECTED] }
+                rejectionReason: { type: string }
+      responses:
+        '200':
+          description: KYC status updated
+
+  /availability/{doctorId}:
     get:
-      summary: Verify DISHA / ABDM cryptographic audit log hash chain
+      summary: Retrieve available, held, and booked slots for a doctor
+      tags: [Availability]
+      parameters:
+        - name: doctorId
+          in: path
+          required: true
+          schema: { type: string }
       responses:
         '200':
-          description: Cryptographic integrity status
+          description: Chronological list of consultation slots
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AvailabilitySlot'
+
+  /availability/slots:
+    post:
+      summary: Create an individual availability slot
+      tags: [Availability]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [doctorId, startTime, endTime]
+              properties:
+                doctorId: { type: string }
+                startTime: { type: string, format: date-time }
+                endTime: { type: string, format: date-time }
+                slotType: { type: string, enum: [VIDEO, AUDIO, CHAT] }
+                customFee: { type: number }
+      responses:
+        '201':
+          description: Slot created successfully
+
+  /availability/bulk-generate:
+    post:
+      summary: Bulk generate recurring consultation slots for upcoming 7 days
+      tags: [Availability]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [doctorId]
+              properties:
+                doctorId: { type: string }
+                daysAhead: { type: integer, default: 7 }
+      responses:
+        '201':
+          description: Recurring slots generated
+
+  /bookings/hold:
+    post:
+      summary: Atomically reserve a slot for 10 minutes with Redlock distributed lock
+      tags: [Bookings]
+      security:
+        - IdempotencyKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slotId, patientId]
+              properties:
+                slotId: { type: string }
+                patientId: { type: string }
+      responses:
+        '201':
+          description: Slot held successfully for 10 minutes
+        '409':
+          description: Double-booking collision prevented (slot locked or held)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RFC7807Error'
+
+  /bookings/release:
+    post:
+      summary: Release an active 10-minute hold on a slot
+      tags: [Bookings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slotId, patientId]
+              properties:
+                slotId: { type: string }
+                patientId: { type: string }
+      responses:
+        '200':
+          description: Hold released, slot returned to AVAILABLE
+
+  /payments/create-order:
+    post:
+      summary: Create Razorpay checkout order for a held slot
+      tags: [Payments]
+      security:
+        - IdempotencyKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slotId, amount]
+              properties:
+                slotId: { type: string }
+                amount: { type: number }
+                currency: { type: string, default: INR }
+      responses:
+        '201':
+          description: Razorpay order created
+
+  /payments/verify:
+    post:
+      summary: Verify Razorpay HMAC signature, transition slot to BOOKED, and schedule consultation
+      tags: [Payments]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slotId, razorpayOrderId, razorpayPaymentId, razorpaySignature]
+              properties:
+                slotId: { type: string }
+                razorpayOrderId: { type: string }
+                razorpayPaymentId: { type: string }
+                razorpaySignature: { type: string }
+      responses:
+        '200':
+          description: Payment verified and consultation scheduled
+
+  /consultations:
+    get:
+      summary: List consultations filtered by doctor or patient
+      tags: [Consultations]
+      parameters:
+        - name: doctorId
+          in: query
+          schema: { type: string }
+        - name: patientId
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: List of consultations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Consultation'
+
+  /consultations/{id}/notes:
+    patch:
+      summary: Record AES-256-GCM envelope-encrypted clinical SOAP notes
+      tags: [Consultations]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [notes]
+              properties:
+                notes: { type: string }
+                prakritiAssessed: { type: string }
+      responses:
+        '200':
+          description: Clinical notes saved and encrypted
+
+  /prescriptions:
+    post:
+      summary: Issue HMAC-SHA256 digitally signed Ayurvedic prescription
+      tags: [Prescriptions]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [consultationId, doctorId, patientId, medicines]
+              properties:
+                consultationId: { type: string }
+                doctorId: { type: string }
+                patientId: { type: string }
+                diagnosis: { type: string }
+                medicines: { type: array, items: { type: object } }
+                dietaryAdvice: { type: array, items: { type: string } }
+      responses:
+        '201':
+          description: Prescription issued with HMAC digital signature
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Prescription'
+
+  /prescriptions/{id}/verify-signature:
+    get:
+      summary: Cryptographically verify digital prescription authenticity
+      tags: [Prescriptions]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Signature verification result
+
+  /audit/verify-chain:
+    get:
+      summary: Verify DISHA / ABDM cryptographic audit log hash chain end-to-end
+      tags: [Audit, Governance]
+      responses:
+        '200':
+          description: Cryptographic integrity status of audit ledger
+
   /analytics/summary:
     get:
-      summary: Admin governance metrics and doctor utilization
+      summary: Admin governance metrics and clinical KPIs
+      tags: [Analytics, Governance]
       responses:
         '200':
-          description: Analytics summary
+          description: System analytics KPIs and double-booking conflict metrics
+
+  /payouts/balance/{doctorId}:
+    get:
+      summary: Get doctor earnings wallet balance and payout history
+      tags: [Payouts]
+      parameters:
+        - name: doctorId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Wallet balance and settlement stats
+
+  /payouts/request:
+    post:
+      summary: Request doctor earnings payout withdrawal
+      tags: [Payouts]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [doctorId, amount]
+              properties:
+                doctorId: { type: string }
+                amount: { type: number, minimum: 500 }
+                notes: { type: string }
+      responses:
+        '201':
+          description: Payout withdrawal request submitted

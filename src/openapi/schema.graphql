@@ -1,0 +1,232 @@
+"""
+Amrutam Telemedicine Engine - GraphQL Schema
+Provides full query and mutation definitions for Ayurvedic Telehealth operations,
+slot scheduling with zero double-booking, clinical consultation notes, and digital prescriptions.
+"""
+
+enum Role {
+  PATIENT
+  DOCTOR
+  ADMIN
+  AUDITOR
+}
+
+enum VerificationStatus {
+  PENDING_VERIFICATION
+  VERIFIED
+  REJECTED
+}
+
+enum SlotStatus {
+  AVAILABLE
+  HELD
+  BOOKED
+  CANCELLED
+}
+
+enum SlotType {
+  VIDEO
+  AUDIO
+  CHAT
+}
+
+enum ConsultationStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+type User {
+  id: ID!
+  email: String!
+  fullName: String!
+  role: Role!
+  phone: String
+  prakritiType: String
+  verificationStatus: VerificationStatus
+  createdAt: String!
+}
+
+type Doctor {
+  id: ID!
+  userId: ID!
+  fullName: String!
+  email: String!
+  licenseNumber: String!
+  qualification: String!
+  primarySpecialty: String!
+  secondarySpecialties: [String!]!
+  experienceYears: Int!
+  consultationFee: Float!
+  rating: Float!
+  reviewCount: Int!
+  verificationStatus: VerificationStatus!
+  isVerified: Boolean!
+}
+
+type AvailabilitySlot {
+  id: ID!
+  doctorId: ID!
+  startTime: String!
+  endTime: String!
+  slotType: SlotType!
+  status: SlotStatus!
+  customFee: Float!
+  heldByPatientId: ID
+  holdExpiresAt: String
+}
+
+type Consultation {
+  id: ID!
+  slotId: ID!
+  doctorId: ID!
+  patientId: ID!
+  status: ConsultationStatus!
+  startTime: String!
+  endTime: String!
+  encryptedNotes: String
+  prakritiAssessed: String
+}
+
+type MedicineItem {
+  name: String!
+  dosage: String!
+  frequency: String!
+  duration: String!
+  instructions: String
+}
+
+type Prescription {
+  id: ID!
+  consultationId: ID!
+  doctorId: ID!
+  patientId: ID!
+  diagnosis: String!
+  medicines: [MedicineItem!]!
+  dietaryAdvice: [String!]!
+  hmacSignature: String!
+  isVerified: Boolean!
+  issuedAt: String!
+}
+
+type HoldSlotResult {
+  slotId: ID!
+  doctorId: ID!
+  startTime: String!
+  endTime: String!
+  status: SlotStatus!
+  heldByPatientId: ID!
+  holdExpiresAt: String!
+  ttlSeconds: Int!
+  message: String!
+}
+
+type RazorpayOrder {
+  orderId: String!
+  amount: Float!
+  currency: String!
+  slotId: ID!
+}
+
+type Wallet {
+  doctorId: ID!
+  balance: Float!
+  currency: String!
+  totalEarned: Float!
+  pendingSettlement: Float!
+}
+
+type AnalyticsSummary {
+  totalPatients: Int!
+  totalDoctors: Int!
+  completedConsultations: Int!
+  grossRevenue: Float!
+  conflictsPrevented: Int!
+}
+
+type AuditVerificationResult {
+  valid: Boolean!
+  totalRecordsChecked: Int!
+  tamperedIndex: Int
+  lastVerifiedHash: String!
+  algorithm: String!
+}
+
+input HoldSlotInput {
+  slotId: ID!
+  patientId: ID!
+}
+
+input CreateSlotInput {
+  doctorId: ID!
+  startTime: String!
+  endTime: String!
+  slotType: SlotType!
+  customFee: Float
+}
+
+input VerifyPaymentInput {
+  slotId: ID!
+  razorpayOrderId: String!
+  razorpayPaymentId: String!
+  razorpaySignature: String!
+}
+
+input SavePrescriptionInput {
+  consultationId: ID!
+  doctorId: ID!
+  patientId: ID!
+  diagnosis: String!
+  medicines: [MedicineItemInput!]!
+  dietaryAdvice: [String!]
+}
+
+input MedicineItemInput {
+  name: String!
+  dosage: String!
+  frequency: String!
+  duration: String!
+  instructions: String
+}
+
+type Query {
+  # Doctor Discovery
+  doctors(specialty: String, maxFee: Float, minRating: Float): [Doctor!]!
+  doctor(id: ID!): Doctor
+  
+  # Availability
+  doctorSlots(doctorId: ID!): [AvailabilitySlot!]!
+  
+  # Consultations & Prescriptions
+  consultation(id: ID!): Consultation
+  consultations(doctorId: ID, patientId: ID): [Consultation!]!
+  prescription(id: ID!): Prescription
+  verifyPrescriptionSignature(id: ID!): Boolean!
+  
+  # Governance & Analytics
+  analyticsSummary: AnalyticsSummary!
+  verifyAuditLedger: AuditVerificationResult!
+  doctorWallet(doctorId: ID!): Wallet!
+}
+
+type Mutation {
+  # Slot Concurrency & Reservation
+  holdSlot(input: HoldSlotInput!): HoldSlotResult!
+  releaseHold(slotId: ID!, patientId: ID!): Boolean!
+  createSlot(input: CreateSlotInput!): AvailabilitySlot!
+  bulkGenerateSlots(doctorId: ID!, daysAhead: Int): Int!
+  
+  # Payments & Confirmation
+  createPaymentOrder(slotId: ID!, amount: Float!): RazorpayOrder!
+  verifyPaymentAndConfirm(input: VerifyPaymentInput!): Consultation!
+  
+  # Clinical Documentation
+  saveClinicalNotes(consultationId: ID!, notes: String!, prakritiAssessed: String): Consultation!
+  issuePrescription(input: SavePrescriptionInput!): Prescription!
+  
+  # Governance
+  verifyDoctorKyc(doctorId: ID!, status: VerificationStatus!, rejectionReason: String): Doctor!
+  requestPayout(doctorId: ID!, amount: Float!, notes: String): Boolean!
+  approvePayout(payoutId: ID!): Boolean!
+}
